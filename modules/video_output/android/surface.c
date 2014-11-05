@@ -53,6 +53,10 @@
 #define CHROMA_LONGTEXT N_(\
     "Force use of a specific chroma for output. Default is RGB32.")
 
+#define INSTANCEID_TEXT N_("Instance ID")
+#define INSTANCEID_LONGTEXT N_( \
+    "Identifier of the java instance holding the surface to be drawn on.")
+
 #define CFG_PREFIX "androidsurface-"
 
 static int  Open (vlc_object_t *);
@@ -67,6 +71,9 @@ vlc_module_begin()
     add_shortcut("androidsurface", "android")
     add_string(CFG_PREFIX "chroma", NULL, CHROMA_TEXT, CHROMA_LONGTEXT, true)
     set_callbacks(Open, Close)
+
+	add_integer (CFG_PREFIX "instance-id", 0, INSTANCEID_TEXT, INSTANCEID_LONGTEXT, true)
+	        change_volatile ()
 vlc_module_end()
 
 /*****************************************************************************
@@ -76,10 +83,10 @@ vlc_module_end()
 #define THREAD_NAME "AndroidSurface"
 extern int jni_attach_thread(JNIEnv **env, const char *thread_name);
 extern void jni_detach_thread();
-extern void *jni_LockAndGetAndroidSurface();
-extern jobject jni_LockAndGetAndroidJavaSurface();
-extern void  jni_UnlockAndroidSurface();
-extern void  jni_SetAndroidSurfaceSize(int width, int height, int visible_width, int visible_height, int sar_num, int sar_den);
+extern void *jni_LockAndGetAndroidSurface(int instanceId);
+extern jobject jni_LockAndGetAndroidJavaSurface(int instanceId);
+extern void  jni_UnlockAndroidSurface(int instanceId);
+extern void  jni_SetAndroidSurfaceSize(int instanceId, int width, int height, int visible_width, int visible_height, int sar_num, int sar_den);
 
 // _ZN7android7Surface4lockEPNS0_11SurfaceInfoEb
 typedef void (*Surface_lock)(void *, void *, int);
@@ -128,6 +135,7 @@ struct vout_display_sys_t {
 };
 
 struct picture_sys_t {
+	int voutInstanceId;
     void *surf;
     SurfaceInfo info;
     vout_display_sys_t *sys;
@@ -182,6 +190,11 @@ static int Open(vlc_object_t *p_this)
         return VLC_EGENERIC;
     if (vout_display_IsWindowed(vd))
         return VLC_EGENERIC;
+
+    uintptr_t instIdVal = var_InheritInteger (vd, CFG_PREFIX "instance-id");
+	if (instIdVal == 0 || instIdVal > 4294967295)
+		return VLC_EGENERIC;
+	int instanceId = (int)instIdVal;
 
     /* */
     if (vlc_mutex_trylock(&single_instance) != 0) {
@@ -248,6 +261,7 @@ static int Open(vlc_object_t *p_this)
     picture_sys_t *picsys = malloc(sizeof(*picsys));
     if (unlikely(picsys == NULL))
         goto enomem;
+    picsys->voutInstanceId = instanceId;
     picsys->sys = sys;
 
     picture_resource_t resource = { .p_sys = picsys };
@@ -362,9 +376,9 @@ static int  AndroidLockSurface(picture_t *picture)
     sh = sys->fmt.i_height;
 
     if (sys->native_window.winFromSurface) {
-        jobject jsurf = jni_LockAndGetAndroidJavaSurface();
+        jobject jsurf = jni_LockAndGetAndroidJavaSurface(picsys->voutInstanceId);
         if (unlikely(!jsurf)) {
-            jni_UnlockAndroidSurface();
+            jni_UnlockAndroidSurface(picsys->voutInstanceId);
             return VLC_EGENERIC;
         }
         if (sys->window && jsurf != sys->jsurf) {
@@ -382,9 +396,9 @@ static int  AndroidLockSurface(picture_t *picture)
         // as parameter to the unlock function
         picsys->surf = surf = sys->window;
     } else {
-        picsys->surf = surf = jni_LockAndGetAndroidSurface();
+        picsys->surf = surf = jni_LockAndGetAndroidSurface(picsys->voutInstanceId);
         if (unlikely(!surf)) {
-            jni_UnlockAndroidSurface();
+            jni_UnlockAndroidSurface(picsys->voutInstanceId);
             return VLC_EGENERIC;
         }
     }
@@ -394,7 +408,7 @@ static int  AndroidLockSurface(picture_t *picture)
         ANativeWindow_Buffer buf = { 0 };
         int32_t err = sys->native_window.winLock(sys->window, &buf, NULL);
         if (err) {
-            jni_UnlockAndroidSurface();
+            jni_UnlockAndroidSurface(picsys->voutInstanceId);
             return VLC_EGENERIC;
         }
         info->w      = buf.width;
@@ -413,12 +427,12 @@ static int  AndroidLockSurface(picture_t *picture)
 
     if (info->w != aligned_width || info->h != sh || sys->b_changed_crop) {
         // input size doesn't match the surface size -> request a resize
-        jni_SetAndroidSurfaceSize(aligned_width, sh, sys->fmt.i_visible_width, sys->fmt.i_visible_height, sys->i_sar_num, sys->i_sar_den);
+        jni_SetAndroidSurfaceSize(picsys->voutInstanceId, aligned_width, sh, sys->fmt.i_visible_width, sys->fmt.i_visible_height, sys->i_sar_num, sys->i_sar_den);
         // When using ANativeWindow, one should use ANativeWindow_setBuffersGeometry
         // to set the size and format. In our case, these are set via the SurfaceHolder
         // in Java, so we seem to manage without calling this ANativeWindow function.
         sys->s_unlockAndPost(surf);
-        jni_UnlockAndroidSurface();
+        jni_UnlockAndroidSurface(picsys->voutInstanceId);
         sys->b_changed_crop = false;
         return VLC_EGENERIC;
     }
@@ -440,7 +454,7 @@ static void AndroidUnlockSurface(picture_t *picture)
 
     if (likely(picsys->surf))
         sys->s_unlockAndPost(picsys->surf);
-    jni_UnlockAndroidSurface();
+    jni_UnlockAndroidSurface(picsys->voutInstanceId);
 }
 
 static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpicture)

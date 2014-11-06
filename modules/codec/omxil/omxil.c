@@ -69,10 +69,10 @@
 #define THREAD_NAME "omxil"
 extern int jni_attach_thread(JNIEnv **env, const char *thread_name);
 extern void jni_detach_thread();
-extern jobject jni_LockAndGetAndroidJavaSurface();
-extern void jni_UnlockAndroidSurface();
-extern void jni_SetAndroidSurfaceSize(int width, int height, int visible_width, int visible_height, int sar_num, int sar_den);
-extern bool jni_IsVideoPlayerActivityCreated();
+extern jobject jni_LockAndGetAndroidJavaSurface(android_surf_value_t *object);
+extern void jni_UnlockAndroidSurface(android_surf_value_t *object);
+extern void jni_SetAndroidSurfaceSize(android_surf_value_t *object, int width, int height, int visible_width, int visible_height, int sar_num, int sar_den);
+extern bool jni_IsVideoPlayerActivityCreated(android_surf_value_t *android_surface);
 #endif
 
 /*****************************************************************************
@@ -1057,6 +1057,15 @@ static int OpenGeneric( vlc_object_t *p_this, bool b_encode )
         return VLC_ENOMEM;
     }
 
+#if defined(USE_IOMX)
+    p_sys->object = var_CreateGetAddress (p_dec, "drawable-surfacevalue");
+    if (!p_sys->object) {
+        msg_Warn(p_dec, "No android_surf_value_t set.");
+        DeinitOmxCore();
+        return VLC_EGENERIC;
+    }
+#endif
+
     /* Initialise the thread properties */
     if(!b_encode)
     {
@@ -1079,7 +1088,7 @@ static int OpenGeneric( vlc_object_t *p_this, bool b_encode )
     p_sys->in.p_fmt = &p_dec->fmt_in;
     OMX_FIFO_INIT (&p_sys->out.fifo, pInputPortPrivate );
 #if defined(USE_IOMX)
-    p_sys->out.b_direct = jni_IsVideoPlayerActivityCreated() && var_InheritBool(p_dec, CFG_PREFIX "dr");
+    p_sys->out.b_direct = jni_IsVideoPlayerActivityCreated(p_sys->object) && var_InheritBool(p_dec, CFG_PREFIX "dr");
 #else
     p_sys->out.b_direct = false;
 #endif
@@ -1914,6 +1923,8 @@ static void CloseGeneric( vlc_object_t *p_this )
     OMX_FIFO_DESTROY( &p_sys->in.fifo );
     OMX_FIFO_DESTROY( &p_sys->out.fifo );
 
+    var_Destroy (p_dec, "drawable-surfacevalue");
+
     free( p_sys );
 }
 
@@ -2090,9 +2101,9 @@ static void HwBuffer_Init( decoder_t *p_dec, OmxPort *p_port )
         goto error;
     }
 
-    surf = jni_LockAndGetAndroidJavaSurface();
+    surf = jni_LockAndGetAndroidJavaSurface(p_dec->p_sys->object);
     if( !surf ) {
-        jni_UnlockAndroidSurface();
+        jni_UnlockAndroidSurface(p_dec->p_sys->object);
         msg_Warn( p_dec, "jni_LockAndGetAndroidJavaSurface failed" );
         goto error;
     }
@@ -2101,7 +2112,7 @@ static void HwBuffer_Init( decoder_t *p_dec, OmxPort *p_port )
     p_port->p_hwbuf->window = p_port->p_hwbuf->native_window.winFromSurface( p_env, surf );
     jni_detach_thread();
 
-    jni_UnlockAndroidSurface();
+    jni_UnlockAndroidSurface(p_dec->p_sys->object);
     if( !p_port->p_hwbuf->window ) {
         msg_Warn( p_dec, "winFromSurface failed" );
         goto error;
@@ -2256,7 +2267,8 @@ static int HwBuffer_AllocateBuffers( decoder_t *p_dec, OmxPort *p_port )
         goto error;
     }
 
-    jni_SetAndroidSurfaceSize( p_port->p_hwbuf->fmt_out.i_width,
+    jni_SetAndroidSurfaceSize( p_dec->p_sys->object,
+                               p_port->p_hwbuf->fmt_out.i_width,
                                p_port->p_hwbuf->fmt_out.i_height,
                                p_port->p_hwbuf->fmt_out.i_visible_width,
                                p_port->p_hwbuf->fmt_out.i_visible_height,

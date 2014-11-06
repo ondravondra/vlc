@@ -515,6 +515,9 @@ libvlc_media_player_new( libvlc_instance_t *instance )
     var_Create (mp, "drawable-agl", VLC_VAR_INTEGER);
     var_Create (mp, "drawable-nsobject", VLC_VAR_ADDRESS);
 #endif
+#ifdef __ANDROID__
+    var_Create (mp, "drawable-surfacevalue", VLC_VAR_ADDRESS);
+#endif
 
     var_Create (mp, "keyboard-events", VLC_VAR_BOOL);
     var_SetBool (mp, "keyboard-events", true);
@@ -1016,6 +1019,35 @@ void * libvlc_media_player_get_nsobject( libvlc_media_player_t *p_mi )
     return NULL;
 #endif
 }
+
+
+/**************************************************************************
+ * set_surfacevalue
+ **************************************************************************/
+void libvlc_media_player_set_surfacevalue( libvlc_media_player_t *p_mi,
+                                           void * object )
+{
+    assert (p_mi != NULL);
+#ifdef __ANDROID__
+    var_SetAddress (p_mi, "drawable-surfacevalue", object);
+#else
+    (void) p_mi; (void)object;
+#endif
+}
+
+/**************************************************************************
+ * get_surfacevalue
+ **************************************************************************/
+void * libvlc_media_player_get_surfacevalue( libvlc_media_player_t *p_mi )
+{
+    assert (p_mi != NULL);
+#ifdef __ANDROID__
+    return var_GetAddress (p_mi, "drawable-surfacevalue");
+#else
+    return NULL;
+#endif
+}
+
 
 /**************************************************************************
  * set_agl

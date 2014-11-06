@@ -49,14 +49,16 @@
 
 #define THREAD_NAME "android_mediacodec"
 
+typedef struct android_surf_value_t android_surf_value_t;
+
 extern int jni_attach_thread(JNIEnv **env, const char *thread_name);
 extern void jni_detach_thread();
 /* JNI functions to get/set an Android Surface object. */
-extern jobject jni_LockAndGetAndroidJavaSurface();
-extern void jni_UnlockAndroidSurface();
-extern void jni_SetAndroidSurfaceSizeEnv(JNIEnv *p_env, int width, int height, int visible_width, int visible_height, int sar_num, int sar_den);
-extern void jni_EventHardwareAccelerationError();
-extern bool jni_IsVideoPlayerActivityCreated();
+extern jobject jni_LockAndGetAndroidJavaSurface(android_surf_value_t *object);
+extern void jni_UnlockAndroidSurface(android_surf_value_t *object);
+extern void jni_SetAndroidSurfaceSizeEnv(android_surf_value_t *object, JNIEnv *p_env, int width, int height, int visible_width, int visible_height, int sar_num, int sar_den);
+extern void jni_EventHardwareAccelerationError(android_surf_value_t *android_surface);
+extern bool jni_IsVideoPlayerActivityCreated(android_surf_value_t *android_surface);
 
 /* Implementation of a circular buffer of timestamps with overwriting
  * of older values. MediaCodec has only one type of timestamp, if a
@@ -173,6 +175,8 @@ struct decoder_sys_t
     picture_t** inflight_picture; /**< stores the inflight picture for each output buffer or NULL */
 
     timestamp_fifo_t *timestamp_fifo;
+
+    android_surf_value_t *object;
 };
 
 enum Types
@@ -325,6 +329,12 @@ static int OpenDecoder(vlc_object_t *p_this)
     /* Allocate the memory needed to store the decoder's structure */
     if ((p_dec->p_sys = p_sys = calloc(1, sizeof(*p_sys))) == NULL)
         return VLC_ENOMEM;
+
+    p_sys->object = var_CreateGetAddress (p_dec, "drawable-surfacevalue");
+    if (!p_sys->object) {
+        msg_Warn(p_dec, "No android_surf_value_t set.");
+        return VLC_EGENERIC;
+    }
 
     p_dec->pf_decode_video = DecodeVideo;
 
@@ -502,16 +512,16 @@ static int OpenDecoder(vlc_object_t *p_this)
     /* If the VideoPlayerActivity is not started, MediaCodec opaque
        direct rendering should be disabled since no surface will be
        attached to the JNI. */
-    p_sys->direct_rendering = jni_IsVideoPlayerActivityCreated() && var_InheritBool(p_dec, CFG_PREFIX "dr");
+    p_sys->direct_rendering = jni_IsVideoPlayerActivityCreated(p_sys->object) && var_InheritBool(p_dec, CFG_PREFIX "dr");
     if (p_sys->direct_rendering) {
-        jobject surf = jni_LockAndGetAndroidJavaSurface();
+        jobject surf = jni_LockAndGetAndroidJavaSurface(p_sys->object);
         if (surf) {
             // Configure MediaCodec with the Android surface.
             (*env)->CallVoidMethod(env, p_sys->codec, p_sys->configure, format, surf, NULL, 0);
             if ((*env)->ExceptionOccurred(env)) {
                 msg_Warn(p_dec, "Exception occurred in MediaCodec.configure with an output surface.");
                 (*env)->ExceptionClear(env);
-                jni_UnlockAndroidSurface();
+                jni_UnlockAndroidSurface(p_sys->object);
                 goto error;
             }
             p_dec->fmt_out.i_codec = VLC_CODEC_ANDROID_OPAQUE;
@@ -519,7 +529,7 @@ static int OpenDecoder(vlc_object_t *p_this)
             msg_Warn(p_dec, "Failed to get the Android Surface, disabling direct rendering.");
             p_sys->direct_rendering = false;
         }
-        jni_UnlockAndroidSurface();
+        jni_UnlockAndroidSurface(p_sys->object);
     }
     if (!p_sys->direct_rendering) {
         (*env)->CallVoidMethod(env, p_sys->codec, p_sys->configure, format, NULL, NULL, 0);
@@ -573,6 +583,8 @@ static void CloseDecoder(vlc_object_t *p_this)
 
     if (!p_sys)
         return;
+
+    var_Destroy (p_dec, "drawable-surfacevalue");
 
     /* Invalidate all pictures that are currently in flight in order
      * to prevent the vout from using destroyed output buffers. */
@@ -841,7 +853,7 @@ static void GetOutput(decoder_t *p_dec, JNIEnv *env, picture_t **pp_pic, jlong t
                     sar_num = p_dec->fmt_in.video.i_sar_num;
                     sar_den = p_dec->fmt_in.video.i_sar_den;
                 }
-                jni_SetAndroidSurfaceSizeEnv(env, width, height, width, height, sar_num, sar_den);
+                jni_SetAndroidSurfaceSizeEnv(p_sys->object, env, width, height, width, height, sar_num, sar_den);
             } else {
                 if (!GetVlcChromaFormat(p_sys->pixel_format,
                                         &p_dec->fmt_out.i_codec, &name)) {
@@ -901,7 +913,7 @@ static picture_t *DecodeVideo(decoder_t *p_dec, block_t **pp_block)
         block_Release(p_block);
         if (!p_sys->error_event_sent) {
             /* Signal the error to the Java. */
-            jni_EventHardwareAccelerationError();
+            jni_EventHardwareAccelerationError(p_sys->object);
             p_sys->error_event_sent = true;
         }
         return NULL;

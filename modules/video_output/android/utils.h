@@ -24,6 +24,7 @@
 # include "config.h"
 #endif
 
+#include <pthread.h>
 #include <android/native_window.h>
 #include <jni.h>
 #include <android/native_window_jni.h>
@@ -43,6 +44,16 @@ typedef struct
     ptr_ANativeWindow_lock winLock;
     ptr_ANativeWindow_unlockAndPost unlockAndPost;
 } native_window_api_t;
+
+typedef struct android_surf_value_t {
+    pthread_mutex_t vout_android_lock;
+    pthread_cond_t vout_android_surf_attached;
+    void *vout_android_surf;
+    void *vout_android_gui;
+    jobject vout_android_java_surf;
+    jobject vout_android_subtitles_surf;
+    bool vout_video_player_activity_created;
+} android_surf_value_t;
 
 /* Fill the structure passed as parameter and return a library handle
    that should be destroyed with dlclose. */

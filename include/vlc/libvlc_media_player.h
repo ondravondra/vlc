@@ -437,6 +437,23 @@ LIBVLC_API void libvlc_media_player_set_nsobject ( libvlc_media_player_t *p_mi, 
 LIBVLC_API void * libvlc_media_player_get_nsobject ( libvlc_media_player_t *p_mi );
 
 /**
+ * Set the android_surface_value_t structure handler holding the Android surface information where
+ * the media player should render its video output.
+ *
+ * \param p_mi the Media Player
+ * \param object the android_surface_value_t structure to set.
+ */
+LIBVLC_API void libvlc_media_player_set_surfacevalue ( libvlc_media_player_t *p_mi, void * object );
+
+/**
+ * Gets a handler to the android_surface_value_t structure holding Android Surface object information.
+ *
+ * \param p_mi the Media Player
+ * \return the android_surface_value_t pointer or 0 if none where set
+ */
+LIBVLC_API void * libvlc_media_player_get_surfacevalue ( libvlc_media_player_t *p_mi );
+
+/**
  * Set the agl handler where the media player should render its video output.
  *
  * \param p_mi the Media Player

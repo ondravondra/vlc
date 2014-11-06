@@ -138,4 +138,7 @@ struct decoder_sys_t
     size_t i_nal_size_length; /* Length of the NAL size field for H264 */
     int b_use_pts;
 
+#if defined(USE_IOMX)
+    android_surf_value_t *object;
+#endif
 };
